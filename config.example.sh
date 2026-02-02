@@ -66,4 +66,15 @@ LOG_FILE="$HOME/.tunnel-sync.log"
 LOG_LEVEL="INFO"
 
 # Maximum log file size in MB (logs are rotated when exceeded)
-MAX_LOG_SIZE=10
+MAX_LOG_SIZE_MB=10
+
+# =============================================================================
+# AUTO-CLEANUP SETTINGS
+# =============================================================================
+
+# Automatically delete files older than N days (0 to disable)
+# This helps prevent the sync folder from accumulating old screenshots
+AUTO_CLEANUP_DAYS=7
+
+# Run cleanup when daemon starts
+CLEANUP_ON_START=true

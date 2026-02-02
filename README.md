@@ -2,6 +2,8 @@
 
 Bidirectional file sync between local machine and remote VM with automatic clipboard path copy.
 
+**Version**: 2.0.0
+
 ## Overview
 
 tunnel-sync creates a "tunnel" between a folder on your local machine and a folder on a remote VM. Files added to either side are automatically synced to the other. When you add a file locally, the remote path is automatically copied to your clipboard for easy pasting into remote terminal sessions.
@@ -14,6 +16,9 @@ tunnel-sync creates a "tunnel" between a folder on your local machine and a fold
 - **Configurable**: Set your own local and remote folder paths
 - **Lightweight**: Uses standard tools (rsync, fswatch, ssh)
 - **Privacy-Conscious**: You control exactly what gets shared
+- **Log Rotation**: Automatic log rotation when file exceeds configurable size
+- **Auto-Cleanup**: Automatically removes files older than N days
+- **Health Check**: Built-in diagnostic command to verify all components
 
 ## Use Case
 
@@ -203,6 +208,11 @@ SHOW_NOTIFICATIONS=true            # Show macOS notifications on sync
 # Logging
 LOG_FILE="$HOME/.tunnel-sync.log"  # Log file location
 LOG_LEVEL="INFO"                   # DEBUG, INFO, WARN, ERROR
+MAX_LOG_SIZE_MB=10                 # Log rotation threshold (MB)
+
+# Auto-cleanup
+AUTO_CLEANUP_DAYS=7                # Delete files older than N days (0 to disable)
+CLEANUP_ON_START=true              # Run cleanup when daemon starts
 ```
 
 ## Usage
@@ -240,6 +250,43 @@ tunnel-sync stop
 
 ```bash
 tunnel-sync status
+```
+
+### Health Check
+
+Run a comprehensive diagnostic:
+
+```bash
+tunnel-sync health
+```
+
+This checks:
+- Daemon running status
+- Local directory exists
+- SSH connectivity
+- Remote directory exists
+- fswatch monitoring
+- Log file status
+- Config file presence
+
+### View Logs
+
+```bash
+# Show last 50 log entries (default)
+tunnel-sync logs
+
+# Show last 100 entries
+tunnel-sync logs 100
+```
+
+### Cleanup Old Files
+
+```bash
+# Remove files older than AUTO_CLEANUP_DAYS (default: 7)
+tunnel-sync cleanup
+
+# Remove files older than 3 days
+tunnel-sync cleanup 3
 ```
 
 ## Workflow Example
@@ -324,25 +371,42 @@ echo "~/tunnel-share/filename.png" | pbcopy
 
 ## Troubleshooting
 
+### Quick Diagnostic
+
+Run the built-in health check:
+
+```bash
+tunnel-sync health
+```
+
+This will show the status of all components with ✅ or ❌ indicators.
+
 ### Sync not working
 
-1. Check SSH connection:
+1. Run health check first:
+   ```bash
+   tunnel-sync health
+   ```
+
+2. Check SSH connection:
    ```bash
    ssh YOUR_VM "echo connected"
    ```
 
-2. Check rsync:
+3. Check rsync:
    ```bash
    rsync --version
    ```
 
-3. Check fswatch:
+4. Check fswatch:
    ```bash
    fswatch --version
    ```
 
-4. Check logs:
+5. Check logs:
    ```bash
+   tunnel-sync logs
+   # or
    tail -f ~/.tunnel-sync.log
    ```
 

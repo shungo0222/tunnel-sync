@@ -2,6 +2,8 @@
 
 A simplified overview of how tunnel-sync works.
 
+**Version**: 2.0.0
+
 ## What It Does
 
 Creates a shared folder between your Mac and a remote VM. Files you put in the folder appear on both machines.
@@ -61,6 +63,15 @@ Your Mac                          Remote VM
 | `pbcopy` | Copies path to clipboard |
 | `launchd` | Keeps it running in background |
 
+## Maintenance Features (v2.0.0)
+
+| Feature | Purpose |
+|---------|---------|
+| Log rotation | Automatically rotates logs when they exceed MAX_LOG_SIZE_MB |
+| Auto-cleanup | Deletes files older than AUTO_CLEANUP_DAYS |
+| Health check | `tunnel-sync health` diagnoses all components |
+| Logs viewer | `tunnel-sync logs` shows recent log entries |
+
 ## Sync Direction
 
 | Action | Result |
@@ -92,6 +103,15 @@ tunnel-sync start
 # Use it
 mv ~/Desktop/screenshot.png ~/tunnel-share/
 # Path is now in your clipboard!
+
+# Check status
+tunnel-sync health
+
+# View logs
+tunnel-sync logs
+
+# Clean up old files
+tunnel-sync cleanup
 
 # Stop
 tunnel-sync stop

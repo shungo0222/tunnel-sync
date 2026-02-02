@@ -214,6 +214,51 @@ launchctl load ~/Library/LaunchAgents/com.tunnelsync.daemon.plist
 ~/.local/bin/tunnel-sync stop
 ```
 
+### 2026-02-02: Version 2.0.0 - Maintenance Features
+
+**New Features Added**:
+
+1. **Log Rotation** (`rotate_logs()`)
+   - Automatically rotates logs when file exceeds `MAX_LOG_SIZE_MB`
+   - Keeps one backup file (`.log.old`)
+   - Runs on daemon startup
+
+2. **Health Check** (`tunnel-sync health`)
+   - Comprehensive diagnostic command
+   - Checks: daemon status, local/remote directories, SSH connectivity, fswatch monitoring, log file, config file
+   - Shows ✅/❌ status indicators
+   - Returns exit code 0 (healthy) or 1 (issues)
+
+3. **Auto-Cleanup** (`cleanup_old_files()`)
+   - Deletes files older than `AUTO_CLEANUP_DAYS` (default: 7)
+   - Can be run manually: `tunnel-sync cleanup [days]`
+   - Runs automatically on daemon start if `CLEANUP_ON_START=true`
+   - Daily scheduled cleanup in background
+
+4. **Logs Viewer** (`tunnel-sync logs [lines]`)
+   - View recent log entries without remembering log path
+   - Default: last 50 lines
+
+**New Configuration Options**:
+```bash
+MAX_LOG_SIZE_MB=10      # Log rotation threshold
+AUTO_CLEANUP_DAYS=7     # Auto-delete files older than N days (0 to disable)
+CLEANUP_ON_START=true   # Run cleanup when daemon starts
+```
+
+**Updated Commands**:
+```bash
+tunnel-sync health      # Run comprehensive diagnostic
+tunnel-sync cleanup     # Remove files older than AUTO_CLEANUP_DAYS
+tunnel-sync cleanup 3   # Remove files older than 3 days
+tunnel-sync logs        # Show last 50 log entries
+tunnel-sync logs 100    # Show last 100 log entries
+```
+
+**Sync Folder Location Change**:
+- Changed default LOCAL_DIR from `~/tunnel-share` to `~/Desktop/tunnel-share`
+- More convenient location for drag-and-drop workflow
+
 ---
 
 ## 5) Environment Information

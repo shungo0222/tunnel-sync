@@ -14,7 +14,7 @@ CONFIG_FILE="$HOME/.tunnel-sync.conf"
 PID_FILE="$HOME/.tunnel-sync.pid"
 LOCK_FILE="$HOME/.tunnel-sync.lock"
 LAST_SYNC_FILE="$HOME/.tunnel-sync.lastsync"
-VERSION="1.2.0"
+VERSION="2.0.0"
 
 # =============================================================================
 # DEFAULT CONFIGURATION
@@ -23,14 +23,16 @@ VERSION="1.2.0"
 REMOTE_HOST=""
 REMOTE_USER=""
 REMOTE_DIR="~/tunnel-share"
-LOCAL_DIR="$HOME/tunnel-share"
+LOCAL_DIR="$HOME/Desktop/tunnel-share"
 SYNC_INTERVAL=30
 EXCLUDE_PATTERNS=".DS_Store,*.tmp,*.swp,*~,.git"
 COPY_TO_CLIPBOARD=true
 SHOW_NOTIFICATIONS=true
 LOG_FILE="$HOME/.tunnel-sync.log"
 LOG_LEVEL="INFO"
-MAX_LOG_SIZE=10
+MAX_LOG_SIZE_MB=10
+AUTO_CLEANUP_DAYS=7
+CLEANUP_ON_START=true
 
 # =============================================================================
 # LOGGING
@@ -64,6 +66,30 @@ log_debug() { log "DEBUG" "$1"; }
 log_info()  { log "INFO" "$1"; }
 log_warn()  { log "WARN" "$1"; }
 log_error() { log "ERROR" "$1"; }
+
+# =============================================================================
+# LOG ROTATION
+# =============================================================================
+
+rotate_logs() {
+    if [[ ! -f "$LOG_FILE" ]]; then
+        return 0
+    fi
+
+    local size_bytes=$(stat -f%z "$LOG_FILE" 2>/dev/null || stat -c%s "$LOG_FILE" 2>/dev/null || echo 0)
+    local max_bytes=$((MAX_LOG_SIZE_MB * 1024 * 1024))
+
+    if [[ $size_bytes -gt $max_bytes ]]; then
+        local backup="${LOG_FILE}.old"
+        mv "$LOG_FILE" "$backup"
+        log_info "Log rotated (was ${size_bytes} bytes)"
+
+        # Keep only one backup
+        if [[ -f "${LOG_FILE}.old.old" ]]; then
+            rm -f "${LOG_FILE}.old.old"
+        fi
+    fi
+}
 
 # =============================================================================
 # CONFIGURATION
@@ -181,6 +207,48 @@ seconds_since_last_sync() {
 }
 
 # =============================================================================
+# CLEANUP FUNCTIONS
+# =============================================================================
+
+cleanup_old_files() {
+    local days="${1:-$AUTO_CLEANUP_DAYS}"
+    local dry_run="${2:-false}"
+
+    if [[ $days -le 0 ]]; then
+        echo "Auto-cleanup disabled (AUTO_CLEANUP_DAYS=0)"
+        return 0
+    fi
+
+    log_info "Cleaning up files older than $days days"
+
+    local count=0
+    local ssh_target=$(get_ssh_target)
+
+    # Find old files in local directory
+    while IFS= read -r -d '' file; do
+        local filename=$(basename "$file")
+        if [[ "$dry_run" == "true" ]]; then
+            echo "Would delete: $file"
+        else
+            rm -f "$file"
+            log_info "Deleted old file: $filename"
+        fi
+        ((count++))
+    done < <(find "$LOCAL_DIR" -type f -mtime +${days} -print0 2>/dev/null)
+
+    # Sync deletions to remote
+    if [[ $count -gt 0 ]] && [[ "$dry_run" != "true" ]]; then
+        sync_to_remote
+        echo "Cleaned up $count file(s) older than $days days"
+        notify "Cleanup: removed $count old file(s)"
+    elif [[ $count -eq 0 ]]; then
+        echo "No files older than $days days found"
+    else
+        echo "Dry run: would delete $count file(s)"
+    fi
+}
+
+# =============================================================================
 # SYNC FUNCTIONS
 # =============================================================================
 
@@ -216,7 +284,6 @@ sync_from_remote() {
     log_debug "Syncing remote → local"
 
     # Note: No --delete here to prevent accidental deletion of local files
-    # Deletions should be explicit user actions
     eval rsync -avz $exclude_args \
         "${ssh_target}:${REMOTE_DIR}/" \
         "${LOCAL_DIR}/" \
@@ -343,9 +410,18 @@ start_daemon() {
     rm -f "$LOCK_FILE"
     rm -f "$LAST_SYNC_FILE"
 
+    # Rotate logs if needed
+    rotate_logs
+
     # Create directories if needed
     mkdir -p "$LOCAL_DIR"
     ssh $(get_ssh_target) "mkdir -p $REMOTE_DIR" 2>/dev/null || true
+
+    # Run cleanup on start if enabled
+    if [[ "$CLEANUP_ON_START" == "true" ]] && [[ $AUTO_CLEANUP_DAYS -gt 0 ]]; then
+        echo "Running startup cleanup..."
+        cleanup_old_files "$AUTO_CLEANUP_DAYS" false 2>/dev/null || true
+    fi
 
     echo "Starting tunnel-sync daemon..."
 
@@ -358,10 +434,11 @@ start_daemon() {
     echo "Watching: $LOCAL_DIR"
     echo "Remote: $(get_ssh_target):$REMOTE_DIR"
     echo "Log: $LOG_FILE"
+    echo "Auto-cleanup: ${AUTO_CLEANUP_DAYS} days"
 }
 
 run_daemon() {
-    log_info "Daemon started"
+    log_info "Daemon started (v$VERSION)"
 
     # Clean up lock file on exit
     trap "release_lock; exit" INT TERM EXIT
@@ -377,12 +454,25 @@ run_daemon() {
     ) &
     local pull_pid=$!
 
+    # Start daily cleanup loop in background
+    (
+        while true; do
+            # Sleep for 24 hours
+            sleep 86400
+            if [[ $AUTO_CLEANUP_DAYS -gt 0 ]]; then
+                log_info "Running scheduled cleanup"
+                cleanup_old_files "$AUTO_CLEANUP_DAYS" false 2>/dev/null || true
+            fi
+        done
+    ) &
+    local cleanup_pid=$!
+
     # Watch for local changes
     watch_and_sync &
     local watch_pid=$!
 
-    # Wait for either to exit
-    wait $watch_pid $pull_pid
+    # Wait for any to exit
+    wait $watch_pid $pull_pid $cleanup_pid
 }
 
 stop_daemon() {
@@ -416,6 +506,7 @@ status() {
             echo "Local:  $LOCAL_DIR"
             echo "Remote: $(get_ssh_target):$REMOTE_DIR"
             echo "Sync interval: ${SYNC_INTERVAL}s"
+            echo "Auto-cleanup: ${AUTO_CLEANUP_DAYS} days"
             if is_locked; then
                 echo "Status: Syncing..."
             else
@@ -434,6 +525,98 @@ status() {
 }
 
 # =============================================================================
+# HEALTH CHECK
+# =============================================================================
+
+health_check() {
+    echo "tunnel-sync Health Check"
+    echo "========================"
+    echo ""
+
+    local all_ok=true
+
+    # Check if daemon is running
+    echo -n "Daemon: "
+    if [[ -f "$PID_FILE" ]]; then
+        local pid=$(cat "$PID_FILE")
+        if kill -0 "$pid" 2>/dev/null; then
+            echo "✅ Running (PID: $pid)"
+        else
+            echo "❌ Not running (stale PID)"
+            all_ok=false
+        fi
+    else
+        echo "❌ Not running"
+        all_ok=false
+    fi
+
+    # Check local directory
+    echo -n "Local directory: "
+    if [[ -d "$LOCAL_DIR" ]]; then
+        local local_count=$(ls -1 "$LOCAL_DIR" 2>/dev/null | wc -l | tr -d ' ')
+        echo "✅ Exists ($local_count files)"
+    else
+        echo "❌ Missing: $LOCAL_DIR"
+        all_ok=false
+    fi
+
+    # Check SSH connectivity
+    echo -n "SSH connection: "
+    if ssh -o ConnectTimeout=5 $(get_ssh_target) "echo ok" &>/dev/null; then
+        echo "✅ Connected to $(get_ssh_target)"
+    else
+        echo "❌ Cannot connect to $(get_ssh_target)"
+        all_ok=false
+    fi
+
+    # Check remote directory
+    echo -n "Remote directory: "
+    if ssh -o ConnectTimeout=5 $(get_ssh_target) "test -d $REMOTE_DIR" &>/dev/null; then
+        local remote_count=$(ssh $(get_ssh_target) "ls -1 $REMOTE_DIR 2>/dev/null | wc -l" | tr -d ' ')
+        echo "✅ Exists ($remote_count files)"
+    else
+        echo "❌ Missing: $REMOTE_DIR"
+        all_ok=false
+    fi
+
+    # Check fswatch
+    echo -n "fswatch: "
+    if pgrep -f "fswatch.*$LOCAL_DIR" &>/dev/null; then
+        echo "✅ Monitoring"
+    else
+        echo "❌ Not monitoring"
+        all_ok=false
+    fi
+
+    # Check log file
+    echo -n "Log file: "
+    if [[ -f "$LOG_FILE" ]]; then
+        local log_size=$(ls -lh "$LOG_FILE" | awk '{print $5}')
+        echo "✅ $LOG_FILE ($log_size)"
+    else
+        echo "⚠️ No log file yet"
+    fi
+
+    # Check config
+    echo -n "Config: "
+    if [[ -f "$CONFIG_FILE" ]]; then
+        echo "✅ $CONFIG_FILE"
+    else
+        echo "❌ Missing config file"
+        all_ok=false
+    fi
+
+    echo ""
+    if [[ "$all_ok" == "true" ]]; then
+        echo "Overall: ✅ All systems healthy"
+        exit 0
+    else
+        echo "Overall: ❌ Some issues detected"
+        exit 1
+    fi
+}
+
+# =============================================================================
 # MAIN
 # =============================================================================
 
@@ -447,10 +630,14 @@ Commands:
     start       Start the sync daemon in background
     stop        Stop the sync daemon
     status      Show daemon status
+    health      Run health check on all components
     watch       Run in foreground (for debugging)
     push        Manual sync: local → remote
     pull        Manual sync: remote → local
     sync        Manual bidirectional sync
+    cleanup     Remove files older than AUTO_CLEANUP_DAYS
+    cleanup N   Remove files older than N days
+    logs        Show recent log entries
     help        Show this help message
 
 Configuration:
@@ -459,10 +646,22 @@ Configuration:
 
 Examples:
     tunnel-sync start           # Start background sync
-    tunnel-sync watch           # Run in foreground
-    tunnel-sync push            # One-time upload to VM
-    tunnel-sync pull            # One-time download from VM
+    tunnel-sync health          # Check all components
+    tunnel-sync cleanup         # Remove old files
+    tunnel-sync cleanup 3       # Remove files older than 3 days
+    tunnel-sync logs            # View recent logs
 EOF
+}
+
+show_logs() {
+    local lines="${1:-50}"
+    if [[ -f "$LOG_FILE" ]]; then
+        echo "Last $lines lines of $LOG_FILE:"
+        echo "---"
+        tail -n "$lines" "$LOG_FILE"
+    else
+        echo "No log file found at $LOG_FILE"
+    fi
 }
 
 main() {
@@ -480,6 +679,10 @@ main() {
         status)
             load_config
             status
+            ;;
+        health)
+            load_config
+            health_check
             ;;
         watch)
             load_config
@@ -520,6 +723,15 @@ main() {
                 echo "Failed"
                 exit 1
             fi
+            ;;
+        cleanup)
+            load_config
+            local days="${2:-$AUTO_CLEANUP_DAYS}"
+            cleanup_old_files "$days" false
+            ;;
+        logs)
+            local lines="${2:-50}"
+            show_logs "$lines"
             ;;
         _daemon)
             # Internal command for running as daemon
