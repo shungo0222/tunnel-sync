@@ -195,8 +195,9 @@ watch_and_sync() {
     echo "Watching $LOCAL_DIR for changes..."
     echo "Press Ctrl+C to stop"
 
-    # Track files we've already processed to avoid duplicate clipboard copies
-    declare -A processed_files
+    # Track last processed file to avoid immediate duplicates
+    local last_processed=""
+    local last_processed_time=0
 
     # Watch for file changes
     fswatch -0 "$LOCAL_DIR" | while read -d "" event; do
@@ -227,13 +228,14 @@ watch_and_sync() {
             if sync_to_remote; then
                 local remote_path=$(get_remote_path "$relative_path")
 
-                # Copy to clipboard (only for new files, not repeated events)
-                local file_key="${event}_$(stat -f %m "$event" 2>/dev/null || stat -c %Y "$event" 2>/dev/null)"
-                if [[ -z "${processed_files[$file_key]}" ]]; then
+                # Copy to clipboard (debounce: skip if same file within 2 seconds)
+                local current_time=$(date +%s)
+                if [[ "$event" != "$last_processed" ]] || [[ $((current_time - last_processed_time)) -gt 2 ]]; then
                     copy_to_clipboard "$remote_path"
                     notify "Synced: $filename"
                     echo "✓ Synced: $filename → Clipboard: $remote_path"
-                    processed_files[$file_key]=1
+                    last_processed="$event"
+                    last_processed_time=$current_time
                 fi
             else
                 log_error "Failed to sync: $relative_path"

@@ -100,8 +100,20 @@ tunnel-sync/
 - [x] Implemented uninstall.sh (clean removal)
 - [x] Created .gitignore
 - [x] Made scripts executable
-- [ ] Test on local Mac ↔ VM (kumo-devbox)
-- [ ] Push to GitHub
+- [x] Pushed to GitHub (initial commit)
+
+### 2026-02-02: Installation and Testing
+
+- [x] Installed fswatch via Homebrew
+- [x] Created config file with REMOTE_HOST="kumo"
+- [x] Created local sync folder: ~/tunnel-share
+- [x] Created remote sync folder: ~/tunnel-share on VM
+- [x] Installed tunnel-sync to ~/.local/bin/
+- [x] Fixed bash compatibility issue (macOS uses bash 3.x, removed `declare -A`)
+- [x] Tested local → VM sync: ✅ Working
+- [x] Tested clipboard auto-copy: ✅ Working
+- [x] Tested VM → local sync (pull): ✅ Working
+- [x] Committed and pushed fixes
 
 ---
 
