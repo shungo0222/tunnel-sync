@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # tunnel-sync - Bidirectional file sync between local machine and remote VM
-# https://github.com/YOUR_USERNAME/tunnel-sync
+# https://github.com/shungo0222/tunnel-sync
 
 set -e
 
@@ -12,7 +12,9 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG_FILE="$HOME/.tunnel-sync.conf"
 PID_FILE="$HOME/.tunnel-sync.pid"
-VERSION="1.0.0"
+LOCK_FILE="$HOME/.tunnel-sync.lock"
+LAST_SYNC_FILE="$HOME/.tunnel-sync.lastsync"
+VERSION="1.2.0"
 
 # =============================================================================
 # DEFAULT CONFIGURATION
@@ -22,7 +24,7 @@ REMOTE_HOST=""
 REMOTE_USER=""
 REMOTE_DIR="~/tunnel-share"
 LOCAL_DIR="$HOME/tunnel-share"
-SYNC_INTERVAL=5
+SYNC_INTERVAL=30
 EXCLUDE_PATTERNS=".DS_Store,*.tmp,*.swp,*~,.git"
 COPY_TO_CLIPBOARD=true
 SHOW_NOTIFICATIONS=true
@@ -125,9 +127,6 @@ copy_to_clipboard() {
 
 get_remote_path() {
     local filename="$1"
-    # Expand ~ in REMOTE_DIR
-    local expanded_remote_dir="${REMOTE_DIR/#\~/$HOME}"
-    # But for the path we return, use ~ for readability
     echo "${REMOTE_DIR}/${filename}"
 }
 
@@ -150,6 +149,38 @@ get_ssh_target() {
 }
 
 # =============================================================================
+# LOCK FUNCTIONS (Prevent infinite sync loops)
+# =============================================================================
+
+acquire_lock() {
+    echo $$ > "$LOCK_FILE"
+    log_debug "Lock acquired"
+}
+
+release_lock() {
+    rm -f "$LOCK_FILE"
+    log_debug "Lock released"
+}
+
+is_locked() {
+    [[ -f "$LOCK_FILE" ]]
+}
+
+record_sync_time() {
+    date +%s > "$LAST_SYNC_FILE"
+}
+
+seconds_since_last_sync() {
+    if [[ -f "$LAST_SYNC_FILE" ]]; then
+        local last_sync=$(cat "$LAST_SYNC_FILE")
+        local now=$(date +%s)
+        echo $((now - last_sync))
+    else
+        echo 999
+    fi
+}
+
+# =============================================================================
 # SYNC FUNCTIONS
 # =============================================================================
 
@@ -157,6 +188,7 @@ sync_to_remote() {
     local exclude_args=$(build_exclude_args)
     local ssh_target=$(get_ssh_target)
 
+    acquire_lock
     log_debug "Syncing local → remote"
 
     eval rsync -avz --delete $exclude_args \
@@ -164,21 +196,42 @@ sync_to_remote() {
         "${ssh_target}:${REMOTE_DIR}/" \
         2>&1 | while read line; do log_debug "rsync: $line"; done
 
-    return ${PIPESTATUS[0]}
+    local result=${PIPESTATUS[0]}
+
+    # Record sync completion time
+    record_sync_time
+
+    # Keep lock for a moment to let fswatch events settle
+    sleep 2
+    release_lock
+
+    return $result
 }
 
 sync_from_remote() {
     local exclude_args=$(build_exclude_args)
     local ssh_target=$(get_ssh_target)
 
+    acquire_lock
     log_debug "Syncing remote → local"
 
-    eval rsync -avz --delete $exclude_args \
+    # Note: No --delete here to prevent accidental deletion of local files
+    # Deletions should be explicit user actions
+    eval rsync -avz $exclude_args \
         "${ssh_target}:${REMOTE_DIR}/" \
         "${LOCAL_DIR}/" \
         2>&1 | while read line; do log_debug "rsync: $line"; done
 
-    return ${PIPESTATUS[0]}
+    local result=${PIPESTATUS[0]}
+
+    # Record sync completion time
+    record_sync_time
+
+    # Keep lock for a moment to let fswatch events settle
+    sleep 3
+    release_lock
+
+    return $result
 }
 
 sync_bidirectional() {
@@ -199,11 +252,29 @@ watch_and_sync() {
     local last_processed=""
     local last_processed_time=0
 
-    # Watch for file changes
-    fswatch -0 "$LOCAL_DIR" | while read -d "" event; do
+    # Watch for file changes (latency helps batch rapid events)
+    fswatch -0 --latency 2 "$LOCAL_DIR" | while read -d "" event; do
+        # Skip if sync is in progress (prevents infinite loop)
+        if is_locked; then
+            log_debug "Skipping event (sync in progress): $event"
+            continue
+        fi
+
+        # Skip if recently synced (cooldown period to prevent loops)
+        local since_sync=$(seconds_since_last_sync)
+        if [[ $since_sync -lt 5 ]]; then
+            log_debug "Skipping event (cooldown ${since_sync}s): $event"
+            continue
+        fi
+
         # Get relative filename
         local filename=$(basename "$event")
         local relative_path="${event#$LOCAL_DIR/}"
+
+        # Skip the directory itself
+        if [[ "$event" == "$LOCAL_DIR" ]]; then
+            continue
+        fi
 
         # Skip excluded patterns
         local skip=false
@@ -224,19 +295,21 @@ watch_and_sync() {
         if [[ -f "$event" ]]; then
             log_info "File changed: $relative_path"
 
+            # Debounce: skip if same file within 3 seconds
+            local current_time=$(date +%s)
+            if [[ "$event" == "$last_processed" ]] && [[ $((current_time - last_processed_time)) -lt 3 ]]; then
+                log_debug "Debounced: $relative_path"
+                continue
+            fi
+
             # Sync to remote
             if sync_to_remote; then
                 local remote_path=$(get_remote_path "$relative_path")
-
-                # Copy to clipboard (debounce: skip if same file within 2 seconds)
-                local current_time=$(date +%s)
-                if [[ "$event" != "$last_processed" ]] || [[ $((current_time - last_processed_time)) -gt 2 ]]; then
-                    copy_to_clipboard "$remote_path"
-                    notify "Synced: $filename"
-                    echo "✓ Synced: $filename → Clipboard: $remote_path"
-                    last_processed="$event"
-                    last_processed_time=$current_time
-                fi
+                copy_to_clipboard "$remote_path"
+                notify "Synced: $filename"
+                echo "✓ Synced: $filename → Clipboard: $remote_path"
+                last_processed="$event"
+                last_processed_time=$current_time
             else
                 log_error "Failed to sync: $relative_path"
                 notify "Sync failed: $filename"
@@ -266,6 +339,10 @@ start_daemon() {
         fi
     fi
 
+    # Clean up any stale files
+    rm -f "$LOCK_FILE"
+    rm -f "$LAST_SYNC_FILE"
+
     # Create directories if needed
     mkdir -p "$LOCAL_DIR"
     ssh $(get_ssh_target) "mkdir -p $REMOTE_DIR" 2>/dev/null || true
@@ -286,11 +363,16 @@ start_daemon() {
 run_daemon() {
     log_info "Daemon started"
 
+    # Clean up lock file on exit
+    trap "release_lock; exit" INT TERM EXIT
+
     # Start bidirectional sync loop in background
     (
         while true; do
-            sync_from_remote 2>/dev/null || true
             sleep "$SYNC_INTERVAL"
+            if ! is_locked; then
+                sync_from_remote 2>/dev/null || true
+            fi
         done
     ) &
     local pull_pid=$!
@@ -308,12 +390,18 @@ stop_daemon() {
         local pid=$(cat "$PID_FILE")
         if kill -0 "$pid" 2>/dev/null; then
             echo "Stopping tunnel-sync (PID: $pid)..."
-            kill "$pid"
-            rm "$PID_FILE"
+            kill "$pid" 2>/dev/null || true
+            # Kill child processes
+            pkill -P "$pid" 2>/dev/null || true
+            rm -f "$PID_FILE"
+            rm -f "$LOCK_FILE"
+            rm -f "$LAST_SYNC_FILE"
             echo "Stopped"
         else
             echo "tunnel-sync is not running (stale PID file)"
-            rm "$PID_FILE"
+            rm -f "$PID_FILE"
+            rm -f "$LOCK_FILE"
+            rm -f "$LAST_SYNC_FILE"
         fi
     else
         echo "tunnel-sync is not running"
@@ -327,6 +415,12 @@ status() {
             echo "tunnel-sync is running (PID: $pid)"
             echo "Local:  $LOCAL_DIR"
             echo "Remote: $(get_ssh_target):$REMOTE_DIR"
+            echo "Sync interval: ${SYNC_INTERVAL}s"
+            if is_locked; then
+                echo "Status: Syncing..."
+            else
+                echo "Status: Watching"
+            fi
             exit 0
         else
             echo "tunnel-sync is not running (stale PID file)"

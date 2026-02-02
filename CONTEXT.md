@@ -115,6 +115,59 @@ tunnel-sync/
 - [x] Tested VM → local sync (pull): ✅ Working
 - [x] Committed and pushed fixes
 
+### 2026-02-02: Infinite Loop Bug Fix (v1.1.0)
+
+**Problem Discovered**: Bidirectional sync caused infinite loop
+- Local change detected → sync to VM
+- Periodic pull from VM → local files updated
+- Local change detected again → sync to VM
+- Repeat forever (notifications spam)
+
+**Solution Implemented**: Lock file mechanism
+- `LOCK_FILE="$HOME/.tunnel-sync.lock"` created during sync
+- `watch_and_sync()` skips events when lock file exists
+- Lock held for 1-2 seconds after sync to let fswatch events settle
+- Added `--latency 1` to fswatch for better debouncing
+- Increased `SYNC_INTERVAL` from 5s to 30s to reduce pull frequency
+
+**Changes in v1.1.0**:
+- Added lock file functions: `acquire_lock()`, `release_lock()`, `is_locked()`
+- Modified `sync_to_remote()` and `sync_from_remote()` to use locks
+- Modified `watch_and_sync()` to skip events during sync
+- Added cleanup of lock file in `stop_daemon()` and `start_daemon()`
+- Added trap for clean exit in `run_daemon()`
+- Better child process cleanup with `pkill -P`
+- Added sync interval display in `status` command
+
+### 2026-02-02: Additional Fixes (v1.2.0)
+
+**Problem 1**: Lock mechanism alone wasn't enough - events still fired after lock release
+
+**Solution**: Added cooldown period
+- `LAST_SYNC_FILE` records timestamp of last sync completion
+- `seconds_since_last_sync()` checks elapsed time
+- Events within 5 seconds of last sync are skipped
+- Increased fswatch `--latency` to 2 seconds
+
+**Problem 2**: `--delete` in `sync_from_remote()` was deleting newly created local files
+
+**Scenario**:
+1. User creates file locally
+2. Before sync_to_remote completes, sync_from_remote runs
+3. VM doesn't have the file yet
+4. `--delete` removes the local file
+
+**Solution**: Removed `--delete` from `sync_from_remote()`
+- Files created on VM will be pulled to local
+- Files deleted on VM will remain locally (manual cleanup needed)
+- This is safer for the primary use case (local → VM sync)
+
+**Final Test Results** (v1.2.0):
+- ✅ File added locally → synced to VM
+- ✅ Clipboard auto-copied with VM path
+- ✅ No infinite loop
+- ✅ No accidental file deletion
+
 ---
 
 ## 5) Environment Information
