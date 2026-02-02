@@ -168,6 +168,52 @@ tunnel-sync/
 - ✅ No infinite loop
 - ✅ No accidental file deletion
 
+### 2026-02-02: Auto-Start Configuration
+
+**Setup**: macOS launchd service for automatic startup on login
+
+**Location**: `~/Library/LaunchAgents/com.tunnelsync.daemon.plist`
+
+**Configuration**:
+```xml
+- Label: com.tunnelsync.daemon
+- ProgramArguments: /bin/bash tunnel-sync.sh _daemon
+- RunAtLoad: true
+- KeepAlive: true (restarts if crashes)
+- Logs: ~/.tunnel-sync.log
+```
+
+**Design Decisions**:
+
+1. **VM auto-start not needed**: tunnel-sync runs only on local Mac, manages both push and pull
+
+2. **Not included in chezmoi/dotfiles**:
+   - tunnel-sync is workflow-specific (remote VM development)
+   - Not needed on all machines
+   - Requires machine-specific config (~/.tunnel-sync.conf)
+   - Should be consciously installed by user
+
+3. **Machine-specific files** (not in dotfiles):
+   - `~/.tunnel-sync.conf` - remote host configuration
+   - `~/Library/LaunchAgents/com.tunnelsync.daemon.plist` - launchd service
+   - `~/tunnel-share/` - sync folder
+
+**Commands**:
+```bash
+# Check status
+launchctl list | grep tunnel
+
+# Stop service
+launchctl unload ~/Library/LaunchAgents/com.tunnelsync.daemon.plist
+
+# Start service
+launchctl load ~/Library/LaunchAgents/com.tunnelsync.daemon.plist
+
+# Manual control (if launchd not used)
+~/.local/bin/tunnel-sync start
+~/.local/bin/tunnel-sync stop
+```
+
 ---
 
 ## 5) Environment Information
