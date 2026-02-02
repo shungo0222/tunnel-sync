@@ -303,8 +303,12 @@ The main use case is sharing files with remote Claude Code. After moving a file 
 ## 7) Related Projects
 
 This project is part of the **KumoShogun** ecosystem:
-- **kumo-shogun**: Main project for AI-driven development on remote VM
-- **tunnel-sync**: This project - file sharing between local and VM
+
+| Repository | Description |
+|------------|-------------|
+| [kumo-shogun](https://github.com/shungo0222/kumo-shogun) | Main project for AI-driven development on remote VM |
+| [tunnel-sync](https://github.com/shungo0222/tunnel-sync) | This project - file sharing between local and VM |
+| [dotfiles](https://github.com/shungo0222/dotfiles) | Development environment configs managed by chezmoi |
 
 ---
 
