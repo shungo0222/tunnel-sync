@@ -320,7 +320,7 @@ watch_and_sync() {
     local last_processed_time=0
 
     # Watch for file changes (latency helps batch rapid events)
-    fswatch -0 --latency 2 "$LOCAL_DIR" | while read -d "" event; do
+    fswatch -0 --latency 2 "$LOCAL_DIR" | while IFS= read -r -d "" event; do
         # Skip if sync is in progress (prevents infinite loop)
         if is_locked; then
             log_debug "Skipping event (sync in progress): $event"
@@ -438,6 +438,9 @@ start_daemon() {
 }
 
 run_daemon() {
+    # Disable set -e for daemon mode: fswatch pipe subshells die silently
+    # when any command returns non-zero under set -e, killing the watch loop
+    set +e
     log_info "Daemon started (v$VERSION)"
 
     # Clean up lock file on exit
