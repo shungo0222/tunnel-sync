@@ -263,6 +263,8 @@ cleanup_old_files() {
 # SYNC FUNCTIONS
 # =============================================================================
 
+SYNCED_FILES=""
+
 sync_to_remote() {
     local exclude_args=$(build_exclude_args)
     local ssh_target=$(get_ssh_target)
@@ -270,12 +272,39 @@ sync_to_remote() {
     acquire_lock
     log_debug "Syncing local → remote"
 
-    eval rsync -avz --delete $exclude_args \
+    # Capture rsync output to extract transferred file names
+    local rsync_output
+    rsync_output=$(eval rsync -avz --delete $exclude_args \
         "${LOCAL_DIR}/" \
         "${ssh_target}:${REMOTE_DIR}/" \
-        2>&1 | while read line; do log_debug "rsync: $line"; done
+        2>&1)
 
-    local result=${PIPESTATUS[0]}
+    local result=$?
+
+    # Log rsync output
+    while IFS= read -r line; do
+        log_debug "rsync: $line"
+    done <<< "$rsync_output"
+
+    # Extract transferred file names (skip dirs ending with /, metadata lines, and blank lines)
+    SYNCED_FILES=""
+    while IFS= read -r line; do
+        # rsync -v output: regular files are plain names, dirs end with /
+        # Skip: "sending incremental file list", "sent X bytes...", "total size...", "./", blank
+        if [[ -n "$line" ]] \
+            && [[ "$line" != sending* ]] \
+            && [[ "$line" != sent* ]] \
+            && [[ "$line" != total* ]] \
+            && [[ "$line" != deleting* ]] \
+            && [[ "$line" != ./ ]] \
+            && [[ "$line" != */ ]]; then
+            if [[ -n "$SYNCED_FILES" ]]; then
+                SYNCED_FILES="${SYNCED_FILES}"$'\n'"$line"
+            else
+                SYNCED_FILES="$line"
+            fi
+        fi
+    done <<< "$rsync_output"
 
     # Record sync completion time
     record_sync_time
@@ -383,10 +412,30 @@ watch_and_sync() {
 
             # Sync to remote
             if sync_to_remote; then
-                local remote_path=$(get_remote_path "$relative_path")
-                copy_to_clipboard "$remote_path"
-                notify "Synced: $filename"
-                echo "✓ Synced: $filename → Clipboard: $remote_path"
+                # Build clipboard with all transferred file paths
+                local clipboard_paths=""
+                local synced_count=0
+                if [[ -n "$SYNCED_FILES" ]]; then
+                    while IFS= read -r synced_file; do
+                        local rpath="${REMOTE_DIR}/${synced_file}"
+                        if [[ -n "$clipboard_paths" ]]; then
+                            clipboard_paths="${clipboard_paths}"$'\n'"${rpath}"
+                        else
+                            clipboard_paths="$rpath"
+                        fi
+                        ((synced_count++))
+                    done <<< "$SYNCED_FILES"
+                fi
+                if [[ $synced_count -gt 0 ]]; then
+                    copy_to_clipboard "$clipboard_paths"
+                    notify "Synced: ${synced_count} file(s)"
+                    echo "✓ Synced: ${synced_count} file(s)"
+                else
+                    # Fallback: no new files detected in rsync output
+                    local remote_path=$(get_remote_path "$relative_path")
+                    copy_to_clipboard "$remote_path"
+                    notify "Synced: $filename"
+                fi
                 last_processed="$event"
                 last_processed_time=$current_time
             else
