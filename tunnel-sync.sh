@@ -189,7 +189,18 @@ release_lock() {
 }
 
 is_locked() {
-    [[ -f "$LOCK_FILE" ]]
+    if [[ -f "$LOCK_FILE" ]]; then
+        local lock_pid
+        lock_pid=$(cat "$LOCK_FILE" 2>/dev/null)
+        # Stale lock: holder process is dead
+        if [[ -n "$lock_pid" ]] && ! kill -0 "$lock_pid" 2>/dev/null; then
+            log_debug "Removing stale lock (PID $lock_pid dead)"
+            rm -f "$LOCK_FILE"
+            return 1
+        fi
+        return 0
+    fi
+    return 1
 }
 
 record_sync_time() {
@@ -443,6 +454,9 @@ run_daemon() {
     # when any command returns non-zero under set -e, killing the watch loop
     set +e
     log_info "Daemon started (v$VERSION)"
+
+    # Clean up stale lock from previous crashed daemon
+    rm -f "$LOCK_FILE"
 
     # Clean up lock file on exit
     trap "release_lock; exit" INT TERM EXIT
