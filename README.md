@@ -12,7 +12,7 @@ tunnel-sync creates a "tunnel" between a folder on your local machine and a fold
 
 - **Bidirectional Sync**: Changes on either side are reflected on both
 - **Selective Sharing**: Only syncs files you explicitly place in the tunnel folder
-- **Clipboard Integration**: Automatically copies remote path when local files are added
+- **Clipboard Integration**: Automatically copies remote paths of all synced files to clipboard (newline-separated)
 - **Configurable**: Set your own local and remote folder paths
 - **Lightweight**: Uses standard tools (rsync, fswatch, ssh)
 - **Privacy-Conscious**: You control exactly what gets shared
@@ -28,7 +28,7 @@ tunnel-sync creates a "tunnel" between a folder on your local machine and a fold
 ├─────────────────────────────────────────────────────────────────────────┤
 │                                                                         │
 │  1. Take screenshot on Mac (Cmd+Shift+4)                                │
-│  2. Move to tunnel folder (e.g., ~/tunnel-share)                        │
+│  2. Move to tunnel folder (e.g., ~/Desktop/tunnel-share)                        │
 │  3. tunnel-sync detects and uploads to VM                               │
 │  4. Remote path copied to clipboard                                     │
 │  5. Paste into remote Claude Code → image is analyzed                   │
@@ -46,7 +46,7 @@ tunnel-sync creates a "tunnel" between a folder on your local machine and a fold
 │   LOCAL MACHINE (macOS)                 REMOTE VM (Linux)                │
 │   ─────────────────────                 ───────────────────              │
 │                                                                          │
-│   ~/tunnel-share/                       ~/tunnel-share/                  │
+│   ~/Desktop/tunnel-share/              ~/tunnel-share/                  │
 │   ├── screenshot.png     ◄── rsync ──► ├── screenshot.png               │
 │   ├── error-log.txt      ◄── SSH ────► ├── error-log.txt                │
 │   └── design.jpg         ◄───────────► └── design.jpg                   │
@@ -65,7 +65,7 @@ tunnel-sync creates a "tunnel" between a folder on your local machine and a fold
 │            │                                                             │
 │            ▼                                                             │
 │   ┌─────────────────┐                                                    │
-│   │    pbcopy       │ ─── "~/tunnel-share/screenshot.png"                │
+│   │    pbcopy       │ ─── "~/tunnel-share/screenshot.png"                        │
 │   │  (clipboard)    │                                                    │
 │   └─────────────────┘                                                    │
 │                                                                          │
@@ -85,7 +85,7 @@ tunnel-sync creates a "tunnel" between a folder on your local machine and a fold
 │  [User Action]          [tunnel-sync]           [Result]                │
 │       │                      │                      │                   │
 │       │  Move file to        │                      │                   │
-│       │  ~/tunnel-share/     │                      │                   │
+│       │  ~/Desktop/tunnel-share/     │                      │                   │
 │       │─────────────────────►│                      │                   │
 │       │                      │  fswatch detects     │                   │
 │       │                      │  new file            │                   │
@@ -105,7 +105,7 @@ tunnel-sync creates a "tunnel" between a folder on your local machine and a fold
 │  [VM Action]            [tunnel-sync]           [Result]                │
 │       │                      │                      │                   │
 │       │  Add file to         │                      │                   │
-│       │  ~/tunnel-share/     │                      │                   │
+│       │  ~/tunnel-share/           │                      │                   │
 │       │─────────────────────►│                      │                   │
 │       │                      │  Periodic sync       │                   │
 │       │                      │  pulls from VM       │                   │
@@ -169,7 +169,7 @@ cd tunnel-sync
 
 4. Create local sync folder:
    ```bash
-   mkdir -p ~/tunnel-share
+   mkdir -p ~/Desktop/tunnel-share
    ```
 
 5. Create remote sync folder:
@@ -190,13 +190,13 @@ Configuration file: `~/.tunnel-sync.conf`
 # Remote VM settings
 REMOTE_HOST="your-vm-hostname"    # SSH host (e.g., "kumo" or "user@192.168.1.100")
 REMOTE_USER=""                     # SSH user (leave empty if included in REMOTE_HOST)
-REMOTE_DIR="~/tunnel-share"        # Remote sync directory
+REMOTE_DIR="~/tunnel-share"                # Remote sync directory
 
 # Local settings
-LOCAL_DIR="$HOME/tunnel-share"     # Local sync directory
+LOCAL_DIR="$HOME/Desktop/tunnel-share"    # Local sync directory
 
 # Sync settings
-SYNC_INTERVAL=5                    # Seconds between sync checks (for bidirectional)
+SYNC_INTERVAL=30                   # Seconds between sync checks (for bidirectional)
 EXCLUDE_PATTERNS=".DS_Store,*.tmp,*.swp"  # Files to exclude from sync
 
 # Clipboard settings
@@ -301,7 +301,7 @@ tunnel-sync cleanup 3
 
 2. **Move to tunnel folder**:
    ```bash
-   mv ~/Desktop/Screenshot*.png ~/tunnel-share/
+   mv ~/Desktop/Screenshot*.png ~/Desktop/tunnel-share/
    ```
 
 3. **Automatic sync happens**:
@@ -447,7 +447,7 @@ rm ~/Library/LaunchAgents/com.tunnelsync.plist
 rm ~/.tunnel-sync.conf
 
 # Remove sync folders (optional - will delete synced files!)
-rm -rf ~/tunnel-share
+rm -rf ~/Desktop/tunnel-share
 ssh YOUR_VM "rm -rf ~/tunnel-share"
 ```
 

@@ -11,7 +11,7 @@ Creates a shared folder between your Mac and a remote VM. Files you put in the f
 ```
 Your Mac                          Remote VM
 ────────                          ─────────
-~/tunnel-share/                   ~/tunnel-share/
+~/Desktop/tunnel-share/           ~/tunnel-share/
      │                                 │
      └──────────── SYNCED ─────────────┘
 ```
@@ -28,7 +28,7 @@ Your Mac                          Remote VM
 
 **With tunnel-sync**:
 1. Take screenshot
-2. Move to `~/tunnel-share/`
+2. Move to `~/Desktop/tunnel-share/`
 3. Paste (path auto-copied to clipboard)
 4. Claude can see it
 
@@ -37,7 +37,7 @@ Your Mac                          Remote VM
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                                                             │
-│   1. You drop a file into ~/tunnel-share/                   │
+│   1. You drop a file into ~/Desktop/tunnel-share/            │
 │                        │                                    │
 │                        ▼                                    │
 │   2. fswatch detects the new file                           │
@@ -76,7 +76,7 @@ Your Mac                          Remote VM
 
 | Action | Result |
 |--------|--------|
-| Add file locally | → Appears on VM, path copied to clipboard |
+| Add file locally | → Appears on VM, remote path(s) copied to clipboard |
 | Add file on VM | → Appears locally (periodic sync) |
 | Delete locally | → Deleted on VM |
 | Delete on VM | → Deleted locally |
@@ -86,9 +86,9 @@ Your Mac                          Remote VM
 Edit `~/.tunnel-sync.conf`:
 
 ```bash
-REMOTE_HOST="kumo"              # Your VM's SSH alias
+REMOTE_HOST="cloudlab"          # Your VM's SSH alias
 REMOTE_DIR="~/tunnel-share"     # Folder on VM
-LOCAL_DIR="$HOME/tunnel-share"  # Folder on Mac
+LOCAL_DIR="$HOME/Desktop/tunnel-share"  # Folder on Mac
 ```
 
 ## Quick Start
@@ -101,7 +101,7 @@ LOCAL_DIR="$HOME/tunnel-share"  # Folder on Mac
 tunnel-sync start
 
 # Use it
-mv ~/Desktop/screenshot.png ~/tunnel-share/
+mv ~/Desktop/screenshot.png ~/Desktop/tunnel-share/
 # Path is now in your clipboard!
 
 # Check status

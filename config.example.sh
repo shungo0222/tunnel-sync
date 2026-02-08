@@ -25,7 +25,7 @@ REMOTE_DIR="~/tunnel-share"
 # =============================================================================
 
 # Local directory for synced files
-LOCAL_DIR="$HOME/tunnel-share"
+LOCAL_DIR="$HOME/Desktop/tunnel-share"
 
 # =============================================================================
 # SYNC SETTINGS
@@ -33,7 +33,7 @@ LOCAL_DIR="$HOME/tunnel-share"
 
 # Interval (seconds) between remote → local sync checks
 # Lower = more responsive, higher = less resource usage
-SYNC_INTERVAL=5
+SYNC_INTERVAL=30
 
 # File patterns to exclude from sync (comma-separated)
 # Common patterns: .DS_Store (macOS), *.tmp, *.swp (vim), *~ (backup files)

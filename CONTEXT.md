@@ -259,6 +259,38 @@ tunnel-sync logs 100    # Show last 100 log entries
 - Changed default LOCAL_DIR from `~/tunnel-share` to `~/Desktop/tunnel-share`
 - More convenient location for drag-and-drop workflow
 
+### 2026-02-08: Bug Fixes and Multi-File Clipboard
+
+**Bug 1: Daemon watch loop dying under `set -e`**
+- `set -e` caused fswatch pipe subshells to exit silently when any command returned non-zero
+- Fix: Added `set +e` in `run_daemon()` to disable strict error mode for daemon operation
+
+**Bug 2: Watch events dropped during pull sync**
+- Events received while the periodic pull loop held the lock were silently discarded via `continue`
+- With `SYNC_INTERVAL=5` and rsync+sleep taking ~5s, the lock was held almost constantly
+- Fix: Changed from skip (`continue`) to wait (`while is_locked; do sleep 1`) so events are processed after lock release
+- Also increased `SYNC_INTERVAL` from 5 to 30 seconds and reduced cooldown from 5s to 3s
+
+**Bug 3: Stale lock file blocking watch loop permanently**
+- When a daemon crashed or was `kill -9`'d, the lock file remained with a dead PID
+- `is_locked()` only checked file existence, not whether the holder was alive
+- Fix: `is_locked()` now verifies the lock holder PID is alive via `kill -0`; auto-removes stale locks
+- Also clears any leftover lock on daemon startup
+
+**Bug 4: `while read` unsafe for filenames with spaces**
+- `while read -d ""` didn't use `IFS=` or `-r`, causing issues with space-containing filenames (e.g., macOS screenshots)
+- Fix: Changed to `while IFS= read -r -d ""`
+
+**Feature: Multi-file clipboard copy**
+- Previously, only the triggering file's remote path was copied to clipboard
+- Now parses rsync `-v` output to extract all actually transferred file names
+- All remote paths are copied to clipboard as newline-separated list
+- Only newly transferred files are included (existing unchanged files are excluded)
+
+**Environment Change**:
+- Remote VM renamed from `kumo` to `cloudlab`
+- Config: `REMOTE_HOST="cloudlab"`, `SYNC_INTERVAL=30`
+
 ---
 
 ## 5) Environment Information
@@ -268,16 +300,15 @@ tunnel-sync logs 100    # Show last 100 log entries
 - **Terminal**: iTerm2
 - **SSH**: Tailscale SSH to VM
 
-### Remote VM (kumo-devbox)
+### Remote VM (cloudlab)
 - **Provider**: GCP
 - **OS**: Ubuntu 24.04 LTS
-- **IP**: 100.100.142.79 (Tailscale)
-- **SSH Alias**: `kumo`
+- **SSH Alias**: `cloudlab`
 - **User**: pochi
 
 ### Connection
 - Tailscale VPN connects local Mac, VM, and iPhone
-- SSH works via `ssh kumo` (no password/key needed with Tailscale SSH)
+- SSH works via `ssh cloudlab` (key-based authentication)
 
 ---
 
@@ -302,11 +333,11 @@ The main use case is sharing files with remote Claude Code. After moving a file 
 
 ## 7) Related Projects
 
-This project is part of the **KumoShogun** ecosystem:
+This project is part of the **CloudLab** ecosystem:
 
 | Repository | Description |
 |------------|-------------|
-| [kumo-shogun](https://github.com/shungo0222/kumo-shogun) | Main project for AI-driven development on remote VM |
+| [cloudlab](https://github.com/shungo0222/cloudlab) | Main project for AI-driven development on remote VM |
 | [tunnel-sync](https://github.com/shungo0222/tunnel-sync) | This project - file sharing between local and VM |
 | [dotfiles](https://github.com/shungo0222/dotfiles) | Development environment configs managed by chezmoi |
 
