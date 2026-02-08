@@ -321,15 +321,16 @@ watch_and_sync() {
 
     # Watch for file changes (latency helps batch rapid events)
     fswatch -0 --latency 2 "$LOCAL_DIR" | while IFS= read -r -d "" event; do
-        # Skip if sync is in progress (prevents infinite loop)
-        if is_locked; then
-            log_debug "Skipping event (sync in progress): $event"
-            continue
-        fi
+        # Wait for any in-progress sync to finish (instead of skipping)
+        local wait_count=0
+        while is_locked && [[ $wait_count -lt 30 ]]; do
+            sleep 1
+            ((wait_count++))
+        done
 
-        # Skip if recently synced (cooldown period to prevent loops)
+        # Skip if recently synced (cooldown to prevent loops from our own sync)
         local since_sync=$(seconds_since_last_sync)
-        if [[ $since_sync -lt 5 ]]; then
+        if [[ $since_sync -lt 3 ]]; then
             log_debug "Skipping event (cooldown ${since_sync}s): $event"
             continue
         fi
