@@ -14,7 +14,8 @@ CONFIG_FILE="$HOME/.tunnel-sync.conf"
 PID_FILE="$HOME/.tunnel-sync.pid"
 LOCK_FILE="$HOME/.tunnel-sync.lock"
 LAST_SYNC_FILE="$HOME/.tunnel-sync.lastsync"
-VERSION="2.0.0"
+DELETIONS_FILE="$HOME/.tunnel-sync.deletions"
+VERSION="2.1.0"
 
 # =============================================================================
 # DEFAULT CONFIGURATION
@@ -80,14 +81,8 @@ rotate_logs() {
     local max_bytes=$((MAX_LOG_SIZE_MB * 1024 * 1024))
 
     if [[ $size_bytes -gt $max_bytes ]]; then
-        local backup="${LOG_FILE}.old"
-        mv "$LOG_FILE" "$backup"
+        mv "$LOG_FILE" "${LOG_FILE}.old"
         log_info "Log rotated (was ${size_bytes} bytes)"
-
-        # Keep only one backup
-        if [[ -f "${LOG_FILE}.old.old" ]]; then
-            rm -f "${LOG_FILE}.old.old"
-        fi
     fi
 }
 
@@ -156,14 +151,14 @@ get_remote_path() {
     echo "${REMOTE_DIR}/${filename}"
 }
 
+EXCLUDE_ARGS=()
+
 build_exclude_args() {
-    local exclude_args=""
-    IFS=',' read -ra patterns <<< "$EXCLUDE_PATTERNS"
-    for pattern in "${patterns[@]}"; do
-        pattern=$(echo "$pattern" | xargs)  # trim whitespace
-        exclude_args="$exclude_args --exclude='$pattern'"
+    parse_exclude_patterns
+    EXCLUDE_ARGS=()
+    for pattern in "${EXCLUDE_PARSED[@]}"; do
+        EXCLUDE_ARGS+=("--exclude=$pattern")
     done
-    echo "$exclude_args"
 }
 
 get_ssh_target() {
@@ -172,6 +167,38 @@ get_ssh_target() {
     else
         echo "$REMOTE_HOST"
     fi
+}
+
+EXCLUDE_PARSED=()
+EXCLUDE_PARSED_SRC=""
+
+parse_exclude_patterns() {
+    if [[ "$EXCLUDE_PATTERNS" == "$EXCLUDE_PARSED_SRC" ]]; then
+        return 0
+    fi
+    EXCLUDE_PARSED=()
+    IFS=',' read -ra raw_patterns <<< "$EXCLUDE_PATTERNS"
+    for p in "${raw_patterns[@]}"; do
+        # Trim whitespace without spawning xargs
+        p="${p#"${p%%[![:space:]]*}"}"
+        p="${p%"${p##*[![:space:]]}"}"
+        EXCLUDE_PARSED+=("$p")
+    done
+    EXCLUDE_PARSED_SRC="$EXCLUDE_PATTERNS"
+}
+
+is_excluded() {
+    local relative_path="$1"
+    parse_exclude_patterns
+    IFS='/' read -ra parts <<< "$relative_path"
+    for part in "${parts[@]}"; do
+        for pattern in "${EXCLUDE_PARSED[@]}"; do
+            if [[ "$part" == $pattern ]]; then
+                return 0
+            fi
+        done
+    done
+    return 1
 }
 
 # =============================================================================
@@ -207,6 +234,57 @@ record_sync_time() {
     date +%s > "$LAST_SYNC_FILE"
 }
 
+# =============================================================================
+# DELETION TRACKING (Ensure local deletions propagate to remote)
+# =============================================================================
+
+record_deletion() {
+    local relative_path="$1"
+    echo "$relative_path" >> "$DELETIONS_FILE"
+    log_debug "Recorded pending deletion: $relative_path"
+}
+
+process_deletions() {
+    if [[ ! -f "$DELETIONS_FILE" ]] || [[ ! -s "$DELETIONS_FILE" ]]; then
+        return 0
+    fi
+
+    local ssh_target=$(get_ssh_target)
+    local count=0
+    local failed=0
+    local tmp_file="${DELETIONS_FILE}.processing"
+
+    # Atomically move to avoid losing concurrent writes
+    mv "$DELETIONS_FILE" "$tmp_file" 2>/dev/null || return 0
+
+    while IFS= read -r relative_path; do
+        [[ -z "$relative_path" ]] && continue
+        # Skip if file has reappeared locally (user re-added it)
+        if [[ -e "${LOCAL_DIR}/${relative_path}" ]]; then
+            log_debug "Skipping deletion (file re-added): $relative_path"
+            continue
+        fi
+        local remote_path="${REMOTE_DIR}/${relative_path}"
+        if ssh -o ConnectTimeout=10 "$ssh_target" "rm -rf \"$remote_path\"" 2>/dev/null; then
+            log_info "Remote deletion: $relative_path"
+            count=$((count + 1))
+        else
+            log_warn "Failed to delete remote, re-queuing: $relative_path"
+            echo "$relative_path" >> "$DELETIONS_FILE"
+            failed=$((failed + 1))
+        fi
+    done < "$tmp_file"
+
+    rm -f "$tmp_file"
+
+    if [[ $count -gt 0 ]]; then
+        log_info "Processed $count pending remote deletion(s)"
+    fi
+    if [[ $failed -gt 0 ]]; then
+        log_warn "Re-queued $failed failed deletion(s) for retry"
+    fi
+}
+
 seconds_since_last_sync() {
     if [[ -f "$LAST_SYNC_FILE" ]]; then
         local last_sync=$(cat "$LAST_SYNC_FILE")
@@ -237,14 +315,18 @@ cleanup_old_files() {
 
     # Find old files in local directory
     while IFS= read -r -d '' file; do
-        local filename=$(basename "$file")
+        local relative_path="${file#$LOCAL_DIR/}"
+        # Skip files in excluded directories
+        if is_excluded "$relative_path"; then
+            continue
+        fi
         if [[ "$dry_run" == "true" ]]; then
             echo "Would delete: $file"
         else
             rm -f "$file"
-            log_info "Deleted old file: $filename"
+            log_info "Deleted old file: $relative_path"
         fi
-        ((count++))
+        count=$((count + 1))
     done < <(find "$LOCAL_DIR" -type f -mtime +${days} -print0 2>/dev/null)
 
     # Sync deletions to remote
@@ -266,7 +348,7 @@ cleanup_old_files() {
 SYNCED_FILES=""
 
 sync_to_remote() {
-    local exclude_args=$(build_exclude_args)
+    build_exclude_args
     local ssh_target=$(get_ssh_target)
 
     acquire_lock
@@ -274,7 +356,7 @@ sync_to_remote() {
 
     # Capture rsync output to extract transferred file names
     local rsync_output
-    rsync_output=$(eval rsync -avz --delete $exclude_args \
+    rsync_output=$(rsync -avz --delete "${EXCLUDE_ARGS[@]}" \
         "${LOCAL_DIR}/" \
         "${ssh_target}:${REMOTE_DIR}/" \
         2>&1)
@@ -317,14 +399,14 @@ sync_to_remote() {
 }
 
 sync_from_remote() {
-    local exclude_args=$(build_exclude_args)
+    build_exclude_args
     local ssh_target=$(get_ssh_target)
 
     acquire_lock
     log_debug "Syncing remote → local"
 
     # Note: No --delete here to prevent accidental deletion of local files
-    eval rsync -avz $exclude_args \
+    rsync -avz "${EXCLUDE_ARGS[@]}" \
         "${ssh_target}:${REMOTE_DIR}/" \
         "${LOCAL_DIR}/" \
         2>&1 | while read line; do log_debug "rsync: $line"; done
@@ -365,7 +447,7 @@ watch_and_sync() {
         local wait_count=0
         while is_locked && [[ $wait_count -lt 30 ]]; do
             sleep 1
-            ((wait_count++))
+            wait_count=$((wait_count + 1))
         done
 
         # Skip if recently synced (cooldown to prevent loops from our own sync)
@@ -384,18 +466,8 @@ watch_and_sync() {
             continue
         fi
 
-        # Skip excluded patterns
-        local skip=false
-        IFS=',' read -ra patterns <<< "$EXCLUDE_PATTERNS"
-        for pattern in "${patterns[@]}"; do
-            pattern=$(echo "$pattern" | xargs)
-            if [[ "$filename" == $pattern ]]; then
-                skip=true
-                break
-            fi
-        done
-
-        if [[ "$skip" == "true" ]]; then
+        # Skip excluded patterns (check full relative path, not just basename)
+        if is_excluded "$relative_path"; then
             continue
         fi
 
@@ -423,7 +495,7 @@ watch_and_sync() {
                         else
                             clipboard_paths="$rpath"
                         fi
-                        ((synced_count++))
+                        synced_count=$((synced_count + 1))
                     done <<< "$SYNCED_FILES"
                 fi
                 if [[ $synced_count -gt 0 ]]; then
@@ -443,8 +515,9 @@ watch_and_sync() {
                 notify "Sync failed: $filename"
             fi
         else
-            # File was deleted
+            # File was deleted - record for reliable propagation
             log_info "File deleted: $relative_path"
+            record_deletion "$relative_path"
             if sync_to_remote; then
                 log_info "Deletion synced"
             fi
@@ -476,7 +549,7 @@ start_daemon() {
 
     # Create directories if needed
     mkdir -p "$LOCAL_DIR"
-    ssh $(get_ssh_target) "mkdir -p $REMOTE_DIR" 2>/dev/null || true
+    ssh -o ConnectTimeout=10 "$(get_ssh_target)" "mkdir -p $REMOTE_DIR" 2>/dev/null || true
 
     # Run cleanup on start if enabled
     if [[ "$CLEANUP_ON_START" == "true" ]] && [[ $AUTO_CLEANUP_DAYS -gt 0 ]]; then
@@ -507,14 +580,18 @@ run_daemon() {
     # Clean up stale lock from previous crashed daemon
     rm -f "$LOCK_FILE"
 
-    # Clean up lock file on exit
-    trap "release_lock; exit" INT TERM EXIT
+    # Clean up lock file and kill children on exit
+    trap "release_lock; pkill -P $$ 2>/dev/null; exit" INT TERM EXIT
+
+    # Process any pending deletions from before daemon restart
+    process_deletions 2>/dev/null || true
 
     # Start bidirectional sync loop in background
     (
         while true; do
             sleep "$SYNC_INTERVAL"
             if ! is_locked; then
+                process_deletions 2>/dev/null || true
                 sync_from_remote 2>/dev/null || true
             fi
         done
@@ -629,7 +706,7 @@ health_check() {
 
     # Check SSH connectivity
     echo -n "SSH connection: "
-    if ssh -o ConnectTimeout=5 $(get_ssh_target) "echo ok" &>/dev/null; then
+    if ssh -o ConnectTimeout=5 "$(get_ssh_target)" "echo ok" &>/dev/null; then
         echo "✅ Connected to $(get_ssh_target)"
     else
         echo "❌ Cannot connect to $(get_ssh_target)"
@@ -638,8 +715,8 @@ health_check() {
 
     # Check remote directory
     echo -n "Remote directory: "
-    if ssh -o ConnectTimeout=5 $(get_ssh_target) "test -d $REMOTE_DIR" &>/dev/null; then
-        local remote_count=$(ssh $(get_ssh_target) "ls -1 $REMOTE_DIR 2>/dev/null | wc -l" | tr -d ' ')
+    if ssh -o ConnectTimeout=5 "$(get_ssh_target)" "test -d $REMOTE_DIR" &>/dev/null; then
+        local remote_count=$(ssh -o ConnectTimeout=5 "$(get_ssh_target)" "ls -1 $REMOTE_DIR 2>/dev/null | wc -l" | tr -d ' ')
         echo "✅ Exists ($remote_count files)"
     else
         echo "❌ Missing: $REMOTE_DIR"

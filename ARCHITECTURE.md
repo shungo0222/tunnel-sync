@@ -2,7 +2,7 @@
 
 A simplified overview of how tunnel-sync works.
 
-**Version**: 2.0.0
+**Version**: 2.1.0
 
 ## What It Does
 
@@ -63,10 +63,12 @@ Your Mac                          Remote VM
 | `pbcopy` | Copies path to clipboard |
 | `launchd` | Keeps it running in background |
 
-## Maintenance Features (v2.0.0)
+## Maintenance Features (v2.0.0+)
 
 | Feature | Purpose |
 |---------|---------|
+| Deletion manifest | Ensures local deletions reliably propagate to remote (v2.1.0) |
+| Exclude patterns | Full path-based exclusion for directories like venv, __pycache__ (v2.1.0) |
 | Log rotation | Automatically rotates logs when they exceed MAX_LOG_SIZE_MB |
 | Auto-cleanup | Deletes files older than AUTO_CLEANUP_DAYS |
 | Health check | `tunnel-sync health` diagnoses all components |
@@ -78,8 +80,8 @@ Your Mac                          Remote VM
 |--------|--------|
 | Add file locally | → Appears on VM, remote path(s) copied to clipboard |
 | Add file on VM | → Appears locally (periodic sync) |
-| Delete locally | → Deleted on VM |
-| Delete on VM | → Deleted locally |
+| Delete locally | → Deleted on VM (via deletion manifest) |
+| Delete on VM | → NOT auto-deleted locally (manual `pull` needed) |
 
 ## Configuration
 

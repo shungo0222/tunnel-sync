@@ -2,7 +2,7 @@
 
 Bidirectional file sync between local machine and remote VM with automatic clipboard path copy.
 
-**Version**: 2.0.0
+**Version**: 2.1.0
 
 ## Overview
 
@@ -16,6 +16,7 @@ tunnel-sync creates a "tunnel" between a folder on your local machine and a fold
 - **Configurable**: Set your own local and remote folder paths
 - **Lightweight**: Uses standard tools (rsync, fswatch, ssh)
 - **Privacy-Conscious**: You control exactly what gets shared
+- **Reliable Deletion**: Deletion manifest ensures local deletions always propagate to remote
 - **Log Rotation**: Automatic log rotation when file exceeds configurable size
 - **Auto-Cleanup**: Automatically removes files older than N days
 - **Health Check**: Built-in diagnostic command to verify all components
@@ -197,7 +198,7 @@ LOCAL_DIR="$HOME/Desktop/tunnel-share"    # Local sync directory
 
 # Sync settings
 SYNC_INTERVAL=30                   # Seconds between sync checks (for bidirectional)
-EXCLUDE_PATTERNS=".DS_Store,*.tmp,*.swp"  # Files to exclude from sync
+EXCLUDE_PATTERNS=".DS_Store,*.tmp,*.swp,*~,.git,venv,__pycache__,*.pyc"  # Files to exclude from sync
 
 # Clipboard settings
 COPY_TO_CLIPBOARD=true             # Copy remote path to clipboard on local file add
@@ -330,7 +331,6 @@ tunnel-sync/
 ├── tunnel-sync.sh         # Main sync script
 ├── install.sh             # Installation script
 ├── uninstall.sh           # Uninstallation script
-├── com.tunnelsync.plist   # macOS launchd service definition
 └── .gitignore             # Git ignore patterns
 ```
 
@@ -341,7 +341,7 @@ tunnel-sync/
 Uses `fswatch` to monitor the local sync directory for changes:
 - New files trigger immediate sync + clipboard copy
 - Modified files trigger sync
-- Deleted files trigger sync (deletion propagates)
+- Deleted files trigger sync (deletion propagates to remote via deletion manifest)
 
 ### Sync Mechanism
 
@@ -366,8 +366,11 @@ echo "~/tunnel-share/filename.png" | pbcopy
 ### Bidirectional Sync Strategy
 
 1. **Local changes** (via fswatch): Immediate push to remote
-2. **Remote changes** (via periodic pull): Pull every N seconds
-3. **Conflict resolution**: Last write wins (rsync default)
+2. **Local deletions**: Recorded in deletion manifest (`~/.tunnel-sync.deletions`), processed before each pull to ensure remote deletions
+3. **Remote changes** (via periodic pull): Pull every N seconds (no `--delete` to protect local files)
+4. **Conflict resolution**: Last write wins (rsync default)
+
+Note: Deletions propagate from local → remote only. Files deleted on the remote are not automatically removed locally.
 
 ## Troubleshooting
 

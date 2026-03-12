@@ -291,6 +291,40 @@ tunnel-sync logs 100    # Show last 100 log entries
 - Remote VM renamed from `kumo` to `cloudlab`
 - Config: `REMOTE_HOST="cloudlab"`, `SYNC_INTERVAL=30`
 
+### 2026-03-12: Version 2.1.0 - Reliable Deletion and Code Quality
+
+**Problem 1: Deleted files resurrecting after periodic sync**
+- `sync_from_remote` (no `--delete`) pulled files back from remote before local deletion could propagate
+- Large venv/pdfenv directories generated massive fswatch event noise, causing real file events to be skipped
+
+**Problem 2: Files not syncing to remote**
+- `ref.png` was not synced because venv file activity overwhelmed the fswatch event loop
+- Cooldown/lock mechanisms prevented legitimate events from being processed
+
+**Solution: Deletion Manifest**
+- New `~/.tunnel-sync.deletions` file records all local deletions
+- `process_deletions()` runs before every `sync_from_remote`, deleting recorded paths on remote via SSH
+- Failed SSH deletions are re-queued for retry (not silently dropped)
+- Deletions of excluded files are skipped (no wasted SSH calls)
+
+**Solution: Exclude Pattern Improvements**
+- Added `venv`, `.pdfenv`, `__pycache__`, `*.pyc` to recommended EXCLUDE_PATTERNS
+- New `is_excluded()` function checks full relative path (all components), not just basename
+- Pattern parsing cached via `parse_exclude_patterns()` to avoid spawning xargs per check
+- Exclude check applied consistently: fswatch handler, deletion recording, and `cleanup_old_files`
+
+**Code Quality Fixes**
+- Removed `eval` from rsync commands — replaced with array-based `"${EXCLUDE_ARGS[@]}"` (security fix)
+- Fixed `((count++))` crash under `set -e` when count is 0 — changed to `count=$((count + 1))`
+- Quoted all `$(get_ssh_target)` calls to prevent word splitting
+- Added `-o ConnectTimeout=10` to SSH calls in `start_daemon` and `process_deletions`
+- Daemon trap now kills child processes on exit (`pkill -P $$`)
+- Removed dead code: redundant `is_excluded` check, unreachable log rotation `.old.old` cleanup
+
+**Files Cleaned Up**
+- Removed from local tunnel-share: `venv/`, `.pdfenv/`, `temp/`, `review-guide.md`, `review-guide.pdf`
+- These were VM-specific Python environments and intermediate files not needed locally
+
 ---
 
 ## 5) Environment Information

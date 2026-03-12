@@ -36,8 +36,10 @@ LOCAL_DIR="$HOME/Desktop/tunnel-share"
 SYNC_INTERVAL=30
 
 # File patterns to exclude from sync (comma-separated)
+# Patterns are matched against each path component (e.g., "venv" excludes venv/ at any depth)
 # Common patterns: .DS_Store (macOS), *.tmp, *.swp (vim), *~ (backup files)
-EXCLUDE_PATTERNS=".DS_Store,*.tmp,*.swp,*~,.git"
+# Add venv, __pycache__, etc. if syncing directories with Python environments
+EXCLUDE_PATTERNS=".DS_Store,*.tmp,*.swp,*~,.git,venv,__pycache__,*.pyc"
 
 # =============================================================================
 # CLIPBOARD SETTINGS
