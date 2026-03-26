@@ -39,7 +39,7 @@ SYNC_INTERVAL=30
 # Patterns are matched against each path component (e.g., "venv" excludes venv/ at any depth)
 # Common patterns: .DS_Store (macOS), *.tmp, *.swp (vim), *~ (backup files)
 # Add venv, __pycache__, etc. if syncing directories with Python environments
-EXCLUDE_PATTERNS=".DS_Store,*.tmp,*.swp,*~,.git,venv,__pycache__,*.pyc"
+EXCLUDE_PATTERNS=".DS_Store,*.tmp,*.swp,*~,.git,venv,.pdfenv,__pycache__,*.pyc,node_modules"
 
 # =============================================================================
 # CLIPBOARD SETTINGS

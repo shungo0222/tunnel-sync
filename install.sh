@@ -135,6 +135,8 @@ if [[ "$auto_start" == "y" || "$auto_start" == "Y" ]]; then
     <true/>
     <key>KeepAlive</key>
     <true/>
+    <key>ThrottleInterval</key>
+    <integer>30</integer>
     <key>StandardOutPath</key>
     <string>$HOME/.tunnel-sync.log</string>
     <key>StandardErrorPath</key>
